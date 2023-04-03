@@ -1,191 +1,154 @@
-import os
-import random
-import openai
-import numpy as np
-from gtts import gTTS
-from io import BytesIO
-from pathlib import Path
-from collections import deque
-from langchain.embeddings import OpenAIEmbeddings
-from langchain.vectorstores.faiss import FAISS
-from sklearn.metrics.pairwise import cosine_similarity
-from sentence_transformers import SentenceTransformer
 import time
-
-
+import openai
+from langchain import OpenAI
+from gpt_index import SimpleDirectoryReader, GPTListIndex, GPTSimpleVectorIndex, LLMPredictor, PromptHelper
 class FuseBot:
     def __init__(self):
-        self.embeddings = OpenAIEmbeddings()
-        # self.tts = TTS("tts_models/en/ljspeech/tacotron2-DDC", progress_bar=False, gpu=False)
-        # self.asr = sr.Recognizer()
-        self.SAVE_PATH = Path("./src/data") / "fuse-vectorstore.pkl"
-        self.docsearch = FAISS.load_local(self.SAVE_PATH, self.embeddings)
-        self.model = SentenceTransformer('multi-qa-MiniLM-L6-cos-v1',  device='cpu')
-        self.past_conversation_list = []
-        self.session_state = dict()
-        self.session_state["generated"] = []
-        self.session_state["queue"] = deque([], maxlen=4)
-        self.session_state["question_asked"] = 0
-        self.session_state["past"] = []
-
-    def speech_to_text(self,audio):
-        try:
-            return True, self.asr.recognize_google(audio, language="en")
-        except Exception as e:
-            return False, e.__class__
-    
-    def find_embedding(self, text):
-        return self.model.encode(text)
-
-
-    def send_message(self, message_log):
-        response = openai.ChatCompletion.create(
-                    model = "gpt-4", 
-                    messages = message_log,
-                    temperature=0.7,
-                    max_tokens=1024,
-                    n=1,
-                    stop=None,
-                    timeout=20,
-                    frequency_penalty=0,
-                    presence_penalty=0,
-            )
-        
-        for choice in response.choices:
-            if "text" in choice:
-                return choice.text
-
-        return response["choices"][0]["message"]["content"]
- 
-
-    def query_response(self,payload, hard_skills):
-        docs = self.docsearch.similarity_search(payload["text"])
-        context = " ".join([d.page_content for d in docs[:2]])
-        
-        for i, j in zip(
-            payload["past_user_inputs"][-3:], payload["generated_responses"][-3:]
-        ):
-            self.past_conversation_list.append({"role": "user", "content": i})
-            self.past_conversation_list.append({"role": "assistant", "content": j})
-
-        first_message_log = [
+        self.hard_skills=['pandas','docker','github']
+        self.welcome_message_log =  [
+            {
+                "role": "system", 
+                "content": """ 
+                        You are an Interview Agent for an AI services company Fusemachines. Welcome candidate introducing yourself as the Fuse Interviewing Agent for first only.
+                        Candidate name is Sunil appearing in the interview. Ask candidate if he is ready for the interview. Then stop introducing yourself and also don't ask introduction of candidate or candidate's name.
+                """.strip()
+            }
+            ]
+        self.hard_skills_log = [
             {
                 "role": "system",
                 "content": f"""
-                    You are an Interview Agent for an AI services company Fusemachines. Welcome candidate introducing yourself as the Fuse Interviewing Agent for first only.
-                    Candidate name is Sunil appearing in the interview.
-                    Ask candidate if he is ready for the interview.
-                    Then stop introducing yourself and also don't ask introduction of candidate or candidate's name.
-                    Here is the selected skill {hard_skills[0]} and ignore the rest skills, also asked personalized technical questions targeting project experience in the selected skill, one after another in a conversation style, to the candidate in the whole interview.  
-                    Make Sure you should ask technical questions one by one or one after another.
-                    Do not reply with any extended answer explanations to any of the questions you asked, even if the candidate cannot answer them. Simply move to the next question.
-                    Do not write all the questions at once.
-                    I want you to only reply as the interviewer. 
-                    Ask me the questions and wait for my answers. 
-                    Do not write explanations. 
-                    Do not ask me technical questions after that and try to end the interview.
-                    At the end of the interview, ask me I have any company-related queries. 
-                    If I ask such questions, use the following context: {context}. 
-                    Do not give answers to company-specific factual questions if you don't find them in the context. 
-                    Refrain from answering questions outside of the company's or the interview's context.
+                        Here is the selected skill pandas and ignore the rest skills, also asked personalized technical questions targeting project experience in the selected skill, one after another in a conversation style, to the candidate in the whole interview.  
+                        Make Sure you should ask technical questions one by one or one after another.
+                        Do not reply with any extended answer explanations to any of the questions you asked, even if the candidate cannot answer them. Simply move to the next question.
+                        Do not write all the questions at once.
+                        I want you to only reply as the interviewer. 
+                        Ask me the questions and wait for my answers. 
+                        Do not write explanations.  
                 """
-            },
-            *self.past_conversation_list,
-            {"role": "user", 
-             "content": payload["text"]}
+            }
         ]
-          
-        hard_skills_message = [
-                        {
-                            "role": "system",
-                            "content": f"""
-                            Here is the selected skill {hard_skills[1]} and ignore the rest skills, also asked personalized technical questions targeting project experience in the selected skill, one after another in a conversation style, to the candidate in the whole interview.  
-                            Make sure you should ask technical questions one by one or one after another. 
-                            Make sure you do not ask all the questions at once.
-                            I want you to only reply as the interviewer. 
-                            Ask me the questions and wait for my answers. 
-                            Do not write explanations. 
-                            """
-                        },
-                        *self.past_conversation_list,
-                        {"role": "user", "content": payload["text"]}
-                    ]
         
-        hr_message = [
-                        {
-                            "role": "system",
-                            "content": f"""
-                            Give candidate chance to ask question related to company.
-                            If they ask question related to company, use the following context: {context}. 
-                            Do not give answers to company-specific factual questions if you don't find them in the context. 
-                            Refrain from answering questions outside of the company's or the interview's context.
-                            """
-                        },
-                        *self.past_conversation_list,
-                        {"role": "user", "content": payload["text"]}
-                    ]
+        self.soft_skills_log = [
+            {
+                "role": "system",
+                "content": f"""
+                        Ask only one question about experience where candidate demonstrated his/her leadership skill. Do not ask technical questions after that and try to end the interview.
+                """
+            }
+        ]
         
-        # set a flag to check if the question is asked or not
-        first_request = True
+        self.past_conversation_list = []
+        self.welcome_response = 0
+        self.first_hard_skill_question = 0
         
-        while first_request:
-            if first_request:
-                response = self.send_message(first_message_log)
-
-            for output_message in ''.join(response.lower().split('\n')).splitlines():
-                if any(ele in output_message for ele in hard_skills):
-                    self.session_state["question_asked"] += 1 
-                self.session_state['queue'].append(self.session_state['question_asked'])
-                check_queue = (len(self.session_state['queue']) == 4) & (len(set(self.session_state['queue'])) == 1)
-                
-                if self.session_state["question_asked"] == 4:
-                    response = self.send_message(hard_skills_message)
-                    
-                elif self.session_state["question_asked"] == 8 | check_queue:
-                    response = self.send_message(hr_message)
-                    
-                    # set the flag to false so that the loop breaks
-                    first_request = False
-            else:
-                break      
-                    
-        # print(past_conversation_list)
-        return response
-        
-    def get_answer_from_bot(self, text, hard_skills):
+    def send_message(self, message_log):
         try:
-            output_text = self.query_response(
-                {
-                    "past_user_inputs": self.session_state['past'],
-                    "generated_responses": self.session_state['generated'],
-                    "text": text,
-                }, hard_skills
-            )
-        except:
-            output_text = self.query_response(
-                {
-                    "past_user_inputs": self.session_state['past'],
-                    "generated_responses": self.session_state['queue'],
-                    "text": text,
-                }, hard_skills
-            )
-        
-        self.session_state["past"]+=[text]
-        self.session_state["generated"]+=[output_text]
+            response = openai.ChatCompletion.create(
+                        model = "gpt-4", 
+                        messages = message_log,
+                        temperature=0.7,
+                        max_tokens=1024,
+                        n=1,
+                        stop=None,
+                        timeout=20,
+                        frequency_penalty=0,
+                        presence_penalty=0,
+                )
+            
+            for choice in response.choices:
+                if "text" in choice:
+                    return choice.text
 
-        return output_text
-    
-    def text_to_speech(self,output_text,i):
-        wav = self.tts.tts_to_file(text=output_text,file_path="./src/audio/a_b_"+str(i)+".wav")
-        return True
-    
-    def get_answer(self, text, hard_skills,i):
-        text_response = self.get_answer_from_bot(text, hard_skills)
-        print("Text Response:", text_response)
-        wav = self.text_to_speech(text_response,i)
-        return wav
-    
-    def get_answer_in_text(self,text,hard_skills):
+            return response["choices"][0]["message"]["content"]
         
-        return self.get_answer_from_bot(text, hard_skills)
+        except openai.error.RateLimitError as e:
+            print("Rate limit exceeded. Waiting for 30 seconds.")
+            time.sleep(30)
+        except Exception as e:
+            print("Error: ", e)
+            return None
+        
+    def query_response(self):
+        user_input = input("You: ")
+        self.welcome_message_log.append({"role": "user", "content": user_input})
+        response = self.send_message(self.welcome_message_log)
+        self.welcome_message_log.append({"role": "system", "content": response})
+        print(f"Bot: {response}")
+    
+    def hard_skill_response(self):
+        user_input = input("You: ")
+        self.hard_skills_log.append({"role": "user", "content": user_input})
+        response = self.send_message(self.hard_skills_log)
+        self.hard_skills_log.append({"role": "system", "content": response})
+        print(f"Bot: {response}")
+    
+    def soft_skill_response(self):
+        user_input = input("You: ")
+        self.soft_skills_log.append({"role": "user", "content": user_input})
+        response = self.send_message(self.soft_skills_log)
+        self.soft_skills_log.append({"role": "system", "content": response})
+        print(f"Bot: {response}")
+    
+    def construct_index(self, directory_path):
+        max_input_size = 4096
+        num_outputs = 256
+        max_chunk_overlap = 20
+        chunk_size_limit = 600
+
+        prompt_helper = PromptHelper(max_input_size, num_outputs, max_chunk_overlap, chunk_size_limit=chunk_size_limit)
+        llm_predictor = LLMPredictor(llm=OpenAI(temperature=0, model_name="gpt-4", max_tokens=num_outputs))
+        documents = SimpleDirectoryReader(directory_path).load_data()
+        index = GPTSimpleVectorIndex(documents, llm_predictor=llm_predictor, prompt_helper=prompt_helper)
+        index.save_to_disk('index.json')
+        return index
+
+    def hr_message_reponse(self, input_index = 'index.json'):
+        index = GPTSimpleVectorIndex.load_from_disk(input_index)        
+        query = input('You: ')
+        response = index.query(query, response_mode="compact")
+        if response.response is not None:
+            print("Bot:" + response.response)
+        else:
+            print("\nSorry, I couldn't understand your question. Please try again.\n")
+    
+    def good_bye_response(self):
+        while True:
+            user_input = input("You: ")
+            message_log = [{"role": "user", "content": user_input}]
+            response = self.send_message(message_log)
+            print(f"Bot: {response}")
+            if "goodbye" in user_input.lower() or "bye" in user_input.lower():
+                break
+        
+if __name__ == '__main__':
+    bot = FuseBot()
+    query_response_count = 0
+    hard_skill_response_count = 0
+    soft_skill_response_count = 0
+    hr_message_count = 0
+    goodbye_response_count = 0
+    
+    while query_response_count < 2:  # loop until two query responses
+        bot.query_response()
+        query_response_count += 1
+    
+    while hard_skill_response_count < 4:  # loop until four hard skill responses
+        bot.hard_skill_response()
+        hard_skill_response_count += 1
+        print('*'*50)
+        print(hard_skill_response_count)
+        print('*'*50)
+
+    while soft_skill_response_count < 2:
+        bot.soft_skill_response()
+        soft_skill_response_count += 1
+    
+    while hr_message_count < 3:
+        bot.hr_message_reponse('index.json')
+        hr_message_count += 1
+    
+    while goodbye_response_count < 1:
+        bot.good_bye_response()
+        goodbye_response_count += 1
     
