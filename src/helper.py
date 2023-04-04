@@ -5,6 +5,7 @@ from gpt_index import SimpleDirectoryReader, GPTListIndex, GPTSimpleVectorIndex,
 class FuseBot:
     def __init__(self):
         self.hard_skills=['pandas','docker','github']
+        self.bot_name = "FuseBot"
         self.welcome_message_log =  [
             {
                 "role": "system", 
@@ -41,6 +42,18 @@ class FuseBot:
         self.past_conversation_list = []
         self.welcome_response = 0
         self.first_hard_skill_question = 0
+    
+    def print_output(self, text, word_speed=0.3):
+        for word in text.split(" "):
+            word_len = len(word)
+            if word_len == 0:
+                continue
+            timer_speed = round(word_speed / word_len, 2)
+            for letter in word:
+                time.sleep(timer_speed)
+                print(letter, end="", flush=True)
+            print(" ", end="", flush=True)
+        print()
         
     def send_message(self, message_log):
         try:
@@ -59,8 +72,8 @@ class FuseBot:
             for choice in response.choices:
                 if "text" in choice:
                     return choice.text
-
-            return response["choices"][0]["message"]["content"]
+            output_response = response["choices"][0]["message"]["content"]
+            return output_response
         
         except openai.error.RateLimitError as e:
             print("Rate limit exceeded. Waiting for 30 seconds.")
@@ -74,22 +87,26 @@ class FuseBot:
         self.welcome_message_log.append({"role": "user", "content": user_input})
         response = self.send_message(self.welcome_message_log)
         self.welcome_message_log.append({"role": "system", "content": response})
-        print(f"Bot: {response}")
+        print(f"{self.bot_name}: ", end="", flush=True)
+        self.print_output(response)
     
     def hard_skill_response(self):
         user_input = input("You: ")
         self.hard_skills_log.append({"role": "user", "content": user_input})
         response = self.send_message(self.hard_skills_log)
         self.hard_skills_log.append({"role": "system", "content": response})
-        print(f"Bot: {response}")
+        print(f"{self.bot_name}: ", end="", flush=True)
+        self.print_output(response)
+        
     
     def soft_skill_response(self):
         user_input = input("You: ")
         self.soft_skills_log.append({"role": "user", "content": user_input})
         response = self.send_message(self.soft_skills_log)
         self.soft_skills_log.append({"role": "system", "content": response})
-        print(f"Bot: {response}")
-    
+        print(f"{self.bot_name}: ", end="", flush=True)
+        self.print_output(response)
+        
     def construct_index(self, directory_path):
         max_input_size = 4096
         num_outputs = 256
@@ -108,7 +125,9 @@ class FuseBot:
         query = input('You: ')
         response = index.query(query, response_mode="compact")
         if response.response is not None:
-            print("Bot:" + response.response)
+            print(f"{self.bot_name}: ", end="", flush=True)
+            self.print_output(response.response)
+            
         else:
             print("\nSorry, I couldn't understand your question. Please try again.\n")
     
@@ -117,7 +136,8 @@ class FuseBot:
             user_input = input("You: ")
             message_log = [{"role": "user", "content": user_input}]
             response = self.send_message(message_log)
-            print(f"Bot: {response}")
+            print(f"{self.bot_name}: ", end="", flush=True)
+            self.print_output(response)
             if "goodbye" in user_input.lower() or "bye" in user_input.lower():
                 break
         
@@ -129,24 +149,24 @@ if __name__ == '__main__':
     hr_message_count = 0
     goodbye_response_count = 0
     
-    while query_response_count < 2:  # loop until two query responses
-        bot.query_response()
-        query_response_count += 1
+    # while query_response_count < 2:  # loop until two query responses
+    #     bot.query_response()
+    #     query_response_count += 1
     
-    while hard_skill_response_count < 4:  # loop until four hard skill responses
-        bot.hard_skill_response()
-        hard_skill_response_count += 1
-        print('*'*50)
-        print(hard_skill_response_count)
-        print('*'*50)
+    # while hard_skill_response_count < 4:  # loop until four hard skill responses
+    #     bot.hard_skill_response()
+    #     hard_skill_response_count += 1
+    #     print('*'*50)
+    #     print(hard_skill_response_count)
+    #     print('*'*50)
 
-    while soft_skill_response_count < 2:
-        bot.soft_skill_response()
-        soft_skill_response_count += 1
+    # while soft_skill_response_count < 2:
+    #     bot.soft_skill_response()
+    #     soft_skill_response_count += 1
     
-    while hr_message_count < 3:
-        bot.hr_message_reponse('index.json')
-        hr_message_count += 1
+    # while hr_message_count < 3:
+    #     bot.hr_message_reponse('index.json')
+    #     hr_message_count += 1
     
     while goodbye_response_count < 1:
         bot.good_bye_response()
