@@ -1,7 +1,10 @@
 import time
+import json
+import requests
+import sseclient
 import openai
 from langchain import OpenAI
-from gpt_index import SimpleDirectoryReader, GPTListIndex, GPTSimpleVectorIndex, LLMPredictor, PromptHelper
+from gpt_index import SimpleDirectoryReader, GPTSimpleVectorIndex, LLMPredictor, PromptHelper
 class FuseBot:
     def __init__(self):
         self.hard_skills=['pandas','docker','github']
@@ -55,57 +58,58 @@ class FuseBot:
             print(" ", end="", flush=True)
         print()
         
-    def send_message(self, message_log):
-        try:
-            response = openai.ChatCompletion.create(
-                        model = "gpt-4", 
-                        messages = message_log,
-                        temperature=0.7,
-                        max_tokens=1024,
-                        n=1,
-                        stop=None,
-                        timeout=20,
-                        frequency_penalty=0,
-                        presence_penalty=0,
-                )
-            
-            for choice in response.choices:
-                if "text" in choice:
-                    return choice.text
-            output_response = response["choices"][0]["message"]["content"]
-            return output_response
-        
-        except openai.error.RateLimitError as e:
-            print("Rate limit exceeded. Waiting for 30 seconds.")
-            time.sleep(30)
-        except Exception as e:
-            print("Error: ", e)
-            return None
+    def streaming_response(self, message_log):
+        responses = ''
+        req_url = 'https://api.openai.com/v1/chat/completions'
+        req_headers = {
+            'Accept': 'text/event-stream',
+            'Authorization': 'Bearer ' + openai.api_key,
+        }
+        req_data = {
+            'model': 'gpt-3.5-turbo',
+            "messages": message_log,
+            "max_tokens": 1024,
+            "temperature": 0.1,
+            "stop": None,
+            "frequency_penalty":0,
+            "presence_penalty":0,
+            'stream': True,
+        }
+        request = requests.post(req_url, stream = True, headers=req_headers, json=req_data)
+        client = sseclient.SSEClient(request)
+    
+        for event in client.events():
+            if event.data != '[DONE]':
+                if 'content' in json.loads(event.data)['choices'][0]['delta']:
+                    print(json.loads(event.data)['choices'][0]['delta']['content'], end = "", flush=True)
+                    responses += json.loads(event.data)['choices'][0]['delta']['content']
+        print()
+        return responses
         
     def query_response(self):
         user_input = input("You: ")
         self.welcome_message_log.append({"role": "user", "content": user_input})
-        response = self.send_message(self.welcome_message_log)
-        self.welcome_message_log.append({"role": "system", "content": response})
         print(f"{self.bot_name}: ", end="", flush=True)
-        self.print_output(response)
+        response = self.streaming_response(self.welcome_message_log)
+        self.welcome_message_log.append({"role": "system", "content": response})
+        print('*'*100)
+        print(self.welcome_message_log)
+        print('*'*100)
+        
     
     def hard_skill_response(self):
         user_input = input("You: ")
         self.hard_skills_log.append({"role": "user", "content": user_input})
-        response = self.send_message(self.hard_skills_log)
-        self.hard_skills_log.append({"role": "system", "content": response})
         print(f"{self.bot_name}: ", end="", flush=True)
-        self.print_output(response)
-        
+        response = self.streaming_response(self.hard_skills_log)
+        self.hard_skills_log.append({"role": "system", "content": response})
     
     def soft_skill_response(self):
         user_input = input("You: ")
         self.soft_skills_log.append({"role": "user", "content": user_input})
-        response = self.send_message(self.soft_skills_log)
-        self.soft_skills_log.append({"role": "system", "content": response})
         print(f"{self.bot_name}: ", end="", flush=True)
-        self.print_output(response)
+        response = self.streaming_response(self.soft_skills_log)
+        self.soft_skills_log.append({"role": "system", "content": response})
         
     def construct_index(self, directory_path):
         max_input_size = 4096
@@ -135,11 +139,13 @@ class FuseBot:
         while True:
             user_input = input("You: ")
             message_log = [{"role": "user", "content": user_input}]
-            response = self.send_message(message_log)
+            response = self.streaming_response(message_log)
             print(f"{self.bot_name}: ", end="", flush=True)
             self.print_output(response)
             if "goodbye" in user_input.lower() or "bye" in user_input.lower():
                 break
         
-
-    
+if __name__ == '__main__':
+    bot = FuseBot()
+    while True:
+        bot.send_message()
